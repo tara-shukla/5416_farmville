@@ -133,7 +133,11 @@ will be buggy if you do not implement this one form of mutual exclusion.
 
 The simulation should run until `^C` or until the window is closed.
 
-For part 1, we will look at your logic for ensuring that your `redisplay()`, `updateFarm()`, and `erase()` do not enter the critical section concurrently, do not deadlock, and do not livelock. Your locks on these functions should also be narrowly scoped. This means that you should not acquire the farm update/redisplay lock until you actually need to update or redisplay it, so logic for determining and setting positions for your entities should live outside the lock. This and having all the moving pieces are the only things we will evaluate on part 1
+#### Requirements for Part 1:
+- For part 1, we will look at your logic for ensuring that your `redisplay()`, `updateFarm()`, and `erase()` do not enter the critical section concurrently, do not deadlock, and do not livelock.
+- Your locks on these functions should also be narrowly scoped. This means that you should not acquire the farm update/redisplay lock until you actually need to update or redisplay it, so logic for determining and setting positions for your entities should live outside the lock meant for display updates.
+- You should have all of the required entities in their own thread and moving. Random movement is fine for part 1
+- These are the only things we will evaluate for part 1
 
 This is an open-ended project, so the exact implementation details for how you do this are up to you!
 
