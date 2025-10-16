@@ -145,8 +145,8 @@ This is an open-ended project, so the exact implementation details for how you d
 For this part, add to your part 1 all the missing logic for all the synchronization required to fully implement the application.
 
 What we will evaluate:
-- You must have all of the required components in your farm as described in (The Scenario)[https://github.coecis.cornell.edu/jah649/farmville?tab=readme-ov-file#the-scenario].
-- We will run your program and make sure that the animation seems to be correct and implementing our various rules as per (The Scenario)[https://github.coecis.cornell.edu/jah649/farmville?tab=readme-ov-file#the-scenario] (e.g. no objects on the same layer collide, there must be at least 2 of each item for the oven to bake a batch, chickens walk from nest to nest, etc). 
+- You must have all of the required components in your farm as described in [The Scenario](https://github.coecis.cornell.edu/jah649/farmville?tab=readme-ov-file#the-scenario).
+- We will run your program and make sure that the animation seems to be correct and implementing our various rules as per [The Scenario](https://github.coecis.cornell.edu/jah649/farmville?tab=readme-ov-file#the-scenario) (e.g. no objects on the same layer collide, there must be at least 2 of each item for the oven to bake a batch, chickens walk from nest to nest, etc). 
 - We will check that you aren’t losing produce (like eggs that vanish).
 - We will also check to see that your code has no deadlocks or livelocks caused by the extra synchronization required to implement part 2.
 - Don't do something like using a single mutex lock for your entire simulation. Logic that can run in parallel should be able to run in parallel. For example, the thread logic that determines whether the bakery has enough ingredients to bake a cake should not be using the same lock as logic that ensures entities don't overlap on the screen
