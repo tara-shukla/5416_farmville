@@ -136,7 +136,7 @@ The simulation should run until `^C` or until the window is closed.
 #### Requirements for Part 1:
 - For part 1, we will look at your logic for ensuring that your `redisplay()`, `updateFarm()`, and `erase()` do not enter the critical section concurrently, do not deadlock, and do not livelock.
 - Your locks on these functions should also be narrowly scoped. This means that you should not acquire the farm update/redisplay lock until you actually need to update or redisplay it, so logic for determining and setting positions for your entities should live outside the lock meant for display updates.
-- You should have all of the required entities in their own thread and moving. Random movement is fine for part 1
+- You should have all of the required entities as per [The Scenario](https://github.coecis.cornell.edu/jah649/farmville?tab=readme-ov-file#the-scenario) on screen. The entities with movement should be in their own thread and moving. Random movement is fine for part 1
 - These are the only things we will evaluate for part 1
 
 This is an open-ended project, so the exact implementation details for how you do this are up to you!
@@ -145,7 +145,8 @@ This is an open-ended project, so the exact implementation details for how you d
 For this part, add to your part 1 all the missing logic for all the synchronization required to fully implement the application.
 
 What we will evaluate:
-- We will run your program and make sure that the animation seems to be correct and implementing our various rules (e.g. no objects on the same layer collide, there must be at least 2 of each item for the oven to bake a batch, etc). 
+- You must have all of the required components in your farm as described in (The Scenario)[https://github.coecis.cornell.edu/jah649/farmville?tab=readme-ov-file#the-scenario].
+- We will run your program and make sure that the animation seems to be correct and implementing our various rules as per (The Scenario)[https://github.coecis.cornell.edu/jah649/farmville?tab=readme-ov-file#the-scenario] (e.g. no objects on the same layer collide, there must be at least 2 of each item for the oven to bake a batch, chickens walk from nest to nest, etc). 
 - We will check that you aren’t losing produce (like eggs that vanish).
 - We will also check to see that your code has no deadlocks or livelocks caused by the extra synchronization required to implement part 2.
 - Don't do something like using a single mutex lock for your entire simulation. Logic that can run in parallel should be able to run in parallel. For example, the thread logic that determines whether the bakery has enough ingredients to bake a cake should not be using the same lock as logic that ensures entities don't overlap on the screen
