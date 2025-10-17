@@ -126,10 +126,7 @@ For this part of the assignment, we want you to implement all the needed threads
 - For example, you won’t worry about chickens walking right over each other, or trucks colliding. You won’t worry that the oven needs to coordinate with the stock or even that it needs two units of each ingredient to make a batch of cakes – just have it work randomly, like in our given code. Basically, any rule in the application that involves two threads talking to one another is in part 2, and if you are unsure, just ask on Ed.
 
 Have `redisplay` called from a separate thread that loops, redisplays, sleeps for a while, then repeats. Note that the starter code does not have redisplay in a separate thread, so you will have to fix it
-Even so, there is one form of synchronization required! Our `updateFarm` and `erase` methods are not thread safe, and because
-the underlying display image shows every object, needs to be protected so that (a) two threads never call
-`updateFarm` on the identical object, and (b) if `redisplay()` is running, nobody can call `updateFarm`, and vice-versa. Part 1
-will be buggy if you do not implement this one form of mutual exclusion.
+Even so, there is one form of synchronization required! Our `obj.updateFarm`, `obj.erase`, and `DisplayObject.redisplay` methods are not thread safe because they all read or write from the same farm representation map. This means that two threads can never call any of `updateFarm`, `erase`, or `redisplay` simultaneously, even if they are calling it on different entities. Part 1 will be buggy if you do not implement this one form of mutual exclusion.
 
 The simulation should run until `^C` or until the window is closed.
 
