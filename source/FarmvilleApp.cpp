@@ -32,7 +32,7 @@ void FarmvilleApp::onStartup()
 
     // Create a sprite batch (and background color) to render the scene
     _batch = SpriteBatch::alloc();
-    setClearColor(Color4(0, 229, 0, 255));
+    setClearColor(Color4(97, 227, 57, 255));
     _scene->setSpriteBatch(_batch);
 
     _root = OrderedNode::allocWithOrder(OrderedNode::Order::ASCEND);
