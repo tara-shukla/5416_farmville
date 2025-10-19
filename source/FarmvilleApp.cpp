@@ -57,6 +57,14 @@ void FarmvilleApp::onStartup()
 
     // Build the scene from these assets
     buildScene();
+
+
+
+
+
+
+
+
     Application::onStartup();
 
     // Report the safe area
@@ -195,6 +203,23 @@ void FarmvilleApp::draw()
  * you do in 3152.  However, they greatly simplify scene management, and
  * have become standard in most game engines.
  */
+
 void FarmvilleApp::buildScene()
 {
+    Size size = getDisplaySize();
+    auto background = scene2::PolygonNode::allocWithTexture(_assets->get<Texture>("farm_bg"));
+    
+    background->setAnchor(Vec2::ANCHOR_CENTER);
+    background->setPosition(size.width / 2, size.height / 2);
+    
+    float scaleX = size.width / background->getWidth();
+    float scaleY = size.height / background->getHeight();
+    
+    float scale = std::max(scaleX, scaleY);  
+
+    background->setScale(scale);
+    
+    background->setPriority(1);
+    
+    _root->addChild(background);
 }

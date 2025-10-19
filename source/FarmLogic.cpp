@@ -102,7 +102,6 @@ void cow(int init_x, int init_y, int id){
     DisplayObject cow("cow", cow_w, cow_h, 2, id);
     cow.setPos(init_x, init_y);
 
-    //add this chicken for the first time
     std::unique_lock<std::mutex> lk(display_mtx);
     cow.updateFarm();
     lk.unlock();
@@ -136,7 +135,6 @@ void child(int init_x, int init_y, int id){
     DisplayObject child("child", person_w, person_h, 2, id);
     child.setPos(init_x, init_y);
 
-    //add this chicken for the first time
     std::unique_lock<std::mutex> lk(display_mtx);
     child.updateFarm();
     lk.unlock();
@@ -205,7 +203,6 @@ void truck(int init_x, int init_y, int id){
     DisplayObject truck("truck", truck_w, truck_h, 2, id);
     truck.setPos(init_x, init_y);
 
-    //add this chicken for the first time
     std::unique_lock<std::mutex> lk(display_mtx);
     truck.updateFarm();
     lk.unlock();

@@ -1,5 +1,8 @@
 {
 	"textures": {
+		"farm_bg": {
+			"file":     "textures/farm_bg.png"
+		},
 		"chicken": {
 			"file":     "textures/chicken.png"
 		},
