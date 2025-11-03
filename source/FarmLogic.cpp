@@ -147,7 +147,7 @@ void update_position(int id, int x, int y, int width, int height, int layer) {
     entity_positions[id] = {x, y, width, height, layer};
 }
 
-// Path helper - move towards target with collision avoidance
+// Path helper - move towards target with collision avoidance (OPTIMIZED)
 bool move_towards(DisplayObject &obj, int id, int target_x, int target_y, 
                   int speed, int width, int height, int layer) {
     int dx = 0, dy = 0;
@@ -167,56 +167,76 @@ bool move_towards(DisplayObject &obj, int id, int target_x, int target_y,
         dy = dist_y;
     }
     
+    // Check bounds first (no lock needed)
+    if (out_of_bounds(obj, dx, dy)) {
+        return false;
+    }
+    
+    // NOW lock once for all collision checks and updates
+    std::lock_guard<std::mutex> lk(position_mtx);
+    
+    // Lambda for collision checking (uses already-acquired lock)
+    auto check_move = [&](int new_x, int new_y) -> bool {
+        for (auto& [other_id, pos] : entity_positions) {
+            if (other_id != id && pos.layer == layer) {
+                if (check_collision(new_x, new_y, width, height,
+                                  pos.x, pos.y, pos.width, pos.height)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    
     // Try primary movement
-    if (!out_of_bounds(obj, dx, dy)) {
-        int new_x = obj.x + dx;
-        int new_y = obj.y + dy;
-        
-        if (can_move_to(id, new_x, new_y, width, height, layer)) {
-            obj.setPos(new_x, new_y);
-            update_position(id, new_x, new_y, width, height, layer);
+    int new_x = obj.x + dx;
+    int new_y = obj.y + dy;
+    
+    if (check_move(new_x, new_y)) {
+        obj.setPos(new_x, new_y);
+        entity_positions[id] = {new_x, new_y, width, height, layer};
+        return true;
+    }
+    
+    // If blocked, try moving in just one direction
+    if (dx != 0 && dy != 0) {
+        // Try horizontal only
+        if (check_move(obj.x + dx, obj.y)) {
+            obj.setPos(obj.x + dx, obj.y);
+            entity_positions[id] = {obj.x + dx, obj.y, width, height, layer};
             return true;
         }
-        
-        // If blocked, try moving in just one direction
-        if (dx != 0 && dy != 0) {
-            // Try horizontal only
-            if (can_move_to(id, obj.x + dx, obj.y, width, height, layer)) {
-                obj.setPos(obj.x + dx, obj.y);
-                update_position(id, obj.x + dx, obj.y, width, height, layer);
-                return true;
-            }
-            // Try vertical only
-            if (can_move_to(id, obj.x, obj.y + dy, width, height, layer)) {
-                obj.setPos(obj.x, obj.y + dy);
-                update_position(id, obj.x, obj.y + dy, width, height, layer);
+        // Try vertical only
+        if (check_move(obj.x, obj.y + dy)) {
+            obj.setPos(obj.x, obj.y + dy);
+            entity_positions[id] = {obj.x, obj.y + dy, width, height, layer};
+            return true;
+        }
+    }
+    
+    // If still blocked, try perpendicular movement to go around
+    if (dx == 0) {
+        // Moving vertically, try horizontal dodge
+        for (int dodge : {speed, -speed}) {
+            if (!out_of_bounds(obj, dodge, dy) && 
+                check_move(obj.x + dodge, obj.y + dy)) {
+                obj.setPos(obj.x + dodge, obj.y + dy);
+                entity_positions[id] = {obj.x + dodge, obj.y + dy, width, height, layer};
                 return true;
             }
         }
-        
-        // If still blocked, try perpendicular movement to go around
-        if (dx == 0) {
-            // Moving vertically, try horizontal dodge
-            for (int dodge : {speed, -speed}) {
-                if (!out_of_bounds(obj, dodge, dy) && 
-                    can_move_to(id, obj.x + dodge, obj.y + dy, width, height, layer)) {
-                    obj.setPos(obj.x + dodge, obj.y + dy);
-                    update_position(id, obj.x + dodge, obj.y + dy, width, height, layer);
-                    return true;
-                }
-            }
-        } else if (dy == 0) {
-            // Moving horizontally, try vertical dodge
-            for (int dodge : {speed, -speed}) {
-                if (!out_of_bounds(obj, dx, dodge) && 
-                    can_move_to(id, obj.x + dx, obj.y + dodge, width, height, layer)) {
-                    obj.setPos(obj.x + dx, obj.y + dodge);
-                    update_position(id, obj.x + dx, obj.y + dodge, width, height, layer);
-                    return true;
-                }
+    } else if (dy == 0) {
+        // Moving horizontally, try vertical dodge
+        for (int dodge : {speed, -speed}) {
+            if (!out_of_bounds(obj, dx, dodge) && 
+                check_move(obj.x + dx, obj.y + dodge)) {
+                obj.setPos(obj.x + dx, obj.y + dodge);
+                entity_positions[id] = {obj.x + dx, obj.y + dodge, width, height, layer};
+                return true;
             }
         }
     }
+    
     return false;
 }
 
@@ -243,29 +263,38 @@ void chicken(int init_x, int init_y, int id) {
     }
     
     std::vector<int> nest_ids = {1000, 1001};
-    int current_nest_idx = id % 2;
-    int eggs_laid_at_current = 0;
+    int current_nest_idx = id % 2;  // Start at different nests to reduce contention
+    
+    // // Add small random delay at start to prevent all chickens from moving in lockstep
+    // std::this_thread::sleep_for(std::chrono::milliseconds(id * 100));
     
     while(true) {
+        
         int target_nest_id = nest_ids[current_nest_idx];
         int nest_x = (target_nest_id == 1000) ? NEST1_X : NEST2_X;
         int nest_y = (target_nest_id == 1000) ? NEST1_Y : NEST2_Y;
         
-        // Move toward nest
+        // Move toward nest - with yielding to allow other threads to run
         int attempts = 0;
         while ((abs(chicken.x - nest_x) > 40 || abs(chicken.y - nest_y) > 40) && attempts < 200) {
+            // Move and update position
             move_towards(chicken, id, nest_x, nest_y, 4, chicken_w, chicken_h, 2);
+            
+            // Update display separately with minimal lock time
             {
                 std::lock_guard<std::mutex> disp_lk(display_mtx);
                 chicken.updateFarm();
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            // Small sleep to yield CPU and allow other chickens to move
+            std::this_thread::sleep_for(std::chrono::milliseconds(50 + (id * 10)));  // Stagger the timing
             attempts++;
         }
         
         // At nest - try to lay eggs with timeout
-        bool laid_egg = false;
-        bool nest_was_full = false;
+        bool laid_eggs = false;
+        int total_eggs_laid = 0;
+        
         {
             std::unique_lock<std::mutex> nest_lk(nest_mtx);
             
@@ -279,68 +308,65 @@ void chicken(int init_x, int init_y, int id) {
                 nest_states[target_nest_id].occupied = true;
                 nest_states[target_nest_id].occupant_id = id;
                 
-                int egg_index = nest_states[target_nest_id].egg_count;
-                nest_states[target_nest_id].egg_count++;
-                nest_states[target_nest_id].eggs_by_chicken.push_back(id);
+                // Determine how many eggs to lay (1-3)
+                int eggs_to_lay = 1 + (std::rand() % 3);  // Random between 1 and 3
                 
-                {
-                    std::lock_guard<std::mutex> stats_lk(stats_mtx);
-                    global_stats.eggs_laid++;
-                }
+                // But don't exceed nest capacity of 3
+                int available_space = 3 - nest_states[target_nest_id].egg_count;
+                eggs_to_lay = std::min(eggs_to_lay, available_space);
                 
-                if (egg_index < nest_eggs[target_nest_id].size()) {
-                    int egg_x = (target_nest_id == 1000) ? 90 + (egg_index * 10) : 690 + (egg_index * 10);
-                    int egg_y = 507;
-                    nest_eggs[target_nest_id][egg_index]->setPos(egg_x, egg_y);
+                // Lay all the eggs at once
+                for (int i = 0; i < eggs_to_lay; i++) {
+                    int egg_index = nest_states[target_nest_id].egg_count;
+                    nest_states[target_nest_id].egg_count++;
+                    nest_states[target_nest_id].eggs_by_chicken.push_back(id);
                     
                     {
-                        std::lock_guard<std::mutex> disp_lk(display_mtx);
-                        nest_eggs[target_nest_id][egg_index]->updateFarm();
+                        std::lock_guard<std::mutex> stats_lk(stats_mtx);
+                        global_stats.eggs_laid++;
                     }
+                    
+                    if (egg_index < nest_eggs[target_nest_id].size()) {
+                        int egg_x = (target_nest_id == 1000) ? 90 + (egg_index * 10) : 690 + (egg_index * 10);
+                        int egg_y = 507;
+                        nest_eggs[target_nest_id][egg_index]->setPos(egg_x, egg_y);
+                        
+                        {
+                            std::lock_guard<std::mutex> disp_lk(display_mtx);
+                            nest_eggs[target_nest_id][egg_index]->updateFarm();
+                        }
+                    }
+                    
+                    total_eggs_laid++;
                 }
                 
-                eggs_laid_at_current++;
-                laid_egg = true;
+                laid_eggs = true;
                 
                 nest_states[target_nest_id].occupied = false;
                 nest_states[target_nest_id].occupant_id = -1;
-            } else if (result && nest_states[target_nest_id].egg_count >= 3) {
-                nest_was_full = true;
             }
             
             nest_cv.notify_all();
         }
         
-        // Move away from nest a bit (wander)
-        int wander_x = chicken.x + ((std::rand() % 81) - 40);
-        int wander_y = chicken.y + ((std::rand() % 81) - 40);
+        // Wait 5 seconds at the nest (whether eggs were laid or not)
+        // Break it into smaller chunks to allow display updates
+        // for (int i = 0; i < 50; i++) {
+        //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        //     // Optionally update display position during wait
+        //     {
+        //         std::lock_guard<std::mutex> disp_lk(display_mtx);
+        //         chicken.updateFarm();
+        //     }
+        // }
         
-        // Keep within bounds
-        wander_x = std::max(50, std::min(750, wander_x));
-        wander_y = std::max(250, std::min(550, wander_y));
+        // Switch to the other nest to avoid livelock
+        current_nest_idx = (current_nest_idx + 1) % nest_ids.size();
         
-        attempts = 0;
-        while ((abs(chicken.x - wander_x) > 10 || abs(chicken.y - wander_y) > 10) && attempts < 50) {
-            move_towards(chicken, id, wander_x, wander_y, 4, chicken_w, chicken_h, 2);
-            {
-                std::lock_guard<std::mutex> disp_lk(display_mtx);
-                chicken.updateFarm();
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            attempts++;
-        }
-        
-        // Switch nests after laying 3 eggs or if nest is full
-        if (eggs_laid_at_current >= 3 || nest_was_full) {
-            current_nest_idx = (current_nest_idx + 1) % nest_ids.size();
-            eggs_laid_at_current = 0;
-        }
-        
-        // Wait a bit before next action
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        // Small yield to prevent thread starvation
+        std::this_thread::yield();
     }
 }
-
 // Farmer - follows path between barn and nests
 void farmer(int init_x, int init_y, int id) {
     DisplayObject farmer("farmer", person_w, person_h, 2, id);
@@ -360,9 +386,23 @@ void farmer(int init_x, int init_y, int id) {
         int nest_x = (target_nest_id == 1000) ? NEST1_X : NEST2_X;
         int nest_y = (target_nest_id == 1000) ? NEST1_Y : NEST2_Y;
         
-        // Move toward nest - don't require exact paths
+        // Approach from below - target a position below the nest
+        int approach_y = nest_y - 60;  // Approach from 60 units below
+        
+        // Move toward nest from below
         int attempts = 0;
-        while ((abs(farmer.x - nest_x) > 30 || abs(farmer.y - nest_y) > 30) && attempts < 300) {
+        while ((abs(farmer.x - nest_x) > 30 || abs(farmer.y - approach_y) > 30) && attempts < 300) {
+            move_towards(farmer, id, nest_x, approach_y, 5, person_w, person_h, 2);
+            {
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                farmer.updateFarm();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            attempts++;
+        }
+        
+        // Now move up to the nest for collection
+        while ((abs(farmer.x - nest_x) > 30 || abs(farmer.y - nest_y) > 30) && attempts < 350) {
             move_towards(farmer, id, nest_x, nest_y, 5, person_w, person_h, 2);
             {
                 std::lock_guard<std::mutex> disp_lk(display_mtx);
@@ -376,8 +416,12 @@ void farmer(int init_x, int init_y, int id) {
         {
             std::unique_lock<std::mutex> nest_lk(nest_mtx);
             
-            if (nest_states[target_nest_id].egg_count > 0 && 
-                !nest_states[target_nest_id].occupied) {
+            // Wait for nest to be unoccupied
+            nest_cv.wait(nest_lk, [&] {
+                return !nest_states[target_nest_id].occupied;
+            });
+            
+            if (nest_states[target_nest_id].egg_count > 0) {
                 int eggs_collected = nest_states[target_nest_id].egg_count;
                 nest_states[target_nest_id].egg_count = 0;
                 nest_states[target_nest_id].eggs_by_chicken.clear();
@@ -399,6 +443,8 @@ void farmer(int init_x, int init_y, int id) {
                 
                 barn_cv.notify_all();
             }
+            
+            nest_cv.notify_all();
         }
         
         // Move back toward barn area (doesn't have to reach exact position)
@@ -848,27 +894,27 @@ void FarmLogic::run() {
     std::thread oven(oven_thread);
     
     // 1 farmer starting away from trucks
-    std::thread farmer1(farmer, 150, 250, current_id++);
+    // std::thread farmer1(farmer, 150, 250, current_id++);
     
-    // 3 chickens starting at spread out positions
-    std::thread chicken1(chicken, 250, 350, current_id++);
-    std::thread chicken2(chicken, 400, 380, current_id++);
-    std::thread chicken3(chicken, 550, 350, current_id++);
+    // 3 chickens starting at spread out positions ABOVE the nests
+    std::thread chicken1(chicken, 250, 550, current_id++);
+    std::thread chicken2(chicken, 400, 540, current_id++);
+    std::thread chicken3(chicken, 550, 550, current_id++);
     
-    // 2 cows positioned off to the side, static
-    std::thread cow1(cow, 570, 300, current_id++);  // Far right side
-    std::thread cow2(cow, 650, 300, current_id++);  // Far right side
+    // // 2 cows positioned off to the side, static
+    // std::thread cow1(cow, 570, 300, current_id++);  // Far right side
+    // std::thread cow2(cow, 650, 300, current_id++);  // Far right side
     
-    // 2 trucks - TOP truck for eggs/butter, BOTTOM truck for flour/sugar
-    std::thread truck1(truck, BARN1_X, BARN1_Y, current_id++, true);   // Top truck - eggs/butter
-    std::thread truck2(truck, BARN2_X, BARN2_Y, current_id++, false);  // Bottom truck - flour/sugar
+    // // 2 trucks - TOP truck for eggs/butter, BOTTOM truck for flour/sugar
+    // std::thread truck1(truck, BARN1_X, BARN1_Y, current_id++, true);   // Top truck - eggs/butter
+    // std::thread truck2(truck, BARN2_X, BARN2_Y, current_id++, false);  // Bottom truck - flour/sugar
     
-    // 5 children starting in vertical line going UP from y=50
-    std::thread child1(child, 800, 30, current_id++);   // Bottom of line (front)
-    std::thread child2(child, 800, 200, current_id++);  // 2nd in line
-    std::thread child3(child, 800, 400, current_id++);  // 3rd in line
-    std::thread child4(child, 800, 500, current_id++);  // 4th in line
-    std::thread child5(child, 800, 600, current_id++);  // Top of line (back)
+    // // 5 children starting in vertical line going UP from y=30
+    // std::thread child1(child, 800, 30, current_id++);   // Bottom of line (front)
+    // std::thread child2(child, 800, 200, current_id++);  // 2nd in line
+    // std::thread child3(child, 800, 400, current_id++);  // 3rd in line
+    // std::thread child4(child, 800, 500, current_id++);  // 4th in line
+    // std::thread child5(child, 800, 600, current_id++);  // Top of line (back)
     
     // Join threads
     display_thread.join();
@@ -876,16 +922,17 @@ void FarmLogic::run() {
     chicken1.join();
     chicken2.join();
     chicken3.join();
-    cow1.join();
-    cow2.join();
-    truck1.join();
-    truck2.join();
-    child1.join();
-    child2.join();
-    child3.join();
-    child4.join();
-    child5.join();
-    farmer1.join();
+
+    // cow1.join();
+    // cow2.join();
+    // truck1.join();
+    // truck2.join();
+    // child1.join();
+    // child2.join();
+    // child3.join();
+    // child4.join();
+    // child5.join();
+    // farmer1.join();
 }
 
 void FarmLogic::start() {
@@ -893,4 +940,3 @@ void FarmLogic::start() {
        FarmLogic::run();
     }).detach();
 }
-
