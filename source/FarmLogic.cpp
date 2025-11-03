@@ -939,9 +939,9 @@ void FarmLogic::run() {
     std::thread cow1(cow, 570, 300, current_id++);  
     std::thread cow2(cow, 650, 300, current_id++);  
     
-    // // 2 trucks - TOP truck for eggs/butter, BOTTOM truck for flour/sugar
-    // std::thread truck1(truck, BARN1_X, BARN1_Y, current_id++, true);   // Top truck - eggs/butter
-    // std::thread truck2(truck, BARN2_X, BARN2_Y, current_id++, false);  // Bottom truck - flour/sugar
+    // 2 trucks - TOP truck for eggs/butter, BOTTOM truck for flour/sugar
+    std::thread truck1(truck, BARN1_X, BARN1_Y, current_id++, true);   // Top truck - eggs/butter
+    std::thread truck2(truck, BARN2_X, BARN2_Y, current_id++, false);  // Bottom truck - flour/sugar
     
     // // 5 children starting in vertical line going UP from y=30
     // std::thread child1(child, 800, 30, current_id++);   // Bottom of line (front)
@@ -959,8 +959,8 @@ void FarmLogic::run() {
 
     cow1.join();
     cow2.join();
-    // truck1.join();
-    // truck2.join();
+    truck1.join();
+    truck2.join();
     // child1.join();
     // child2.join();
     // child3.join();
