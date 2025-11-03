@@ -653,11 +653,10 @@ void child(int init_x, int init_y, int id) {
         my_queue_position = next_in_line++;
     }
     
-    int line_x = 500;  // X position for the vertical line (visible area)
-    int base_line_y = 50;  // Starting Y position (bottom)
+    int line_x = 775; 
+    int base_line_y = 60;  
     
-    // Initial position based on queue - going UP from base
-    int line_y = base_line_y + (my_queue_position * 50);  // 50 pixels spacing going up
+    int line_y = base_line_y + (my_queue_position * 80); 
     
     child.setPos(line_x, line_y);
     update_position(id, line_x, line_y, person_w, person_h, 2);
@@ -758,7 +757,6 @@ void child(int init_x, int init_y, int id) {
     }
 }
 
-// Cow - static, just stands in place
 void cow(int init_x, int init_y, int id) {
     DisplayObject cow("cow", cow_w, cow_h, 2, id);
     cow.setPos(init_x, init_y);
@@ -769,7 +767,7 @@ void cow(int init_x, int init_y, int id) {
         cow.updateFarm();
     }
     
-    // Cows just stand there
+    //decided on static cows </3
     while(true) {
         std::this_thread::sleep_for(std::chrono::seconds(10));
     }
@@ -858,19 +856,19 @@ void FarmLogic::run() {
     std::thread chicken3(chicken, 550, 350, current_id++);
     
     // 2 cows positioned off to the side, static
-    std::thread cow1(cow, 750, 250, current_id++);  // Far right side
-    std::thread cow2(cow, 750, 350, current_id++);  // Far right side
+    std::thread cow1(cow, 570, 300, current_id++);  // Far right side
+    std::thread cow2(cow, 650, 300, current_id++);  // Far right side
     
     // 2 trucks - TOP truck for eggs/butter, BOTTOM truck for flour/sugar
     std::thread truck1(truck, BARN1_X, BARN1_Y, current_id++, true);   // Top truck - eggs/butter
     std::thread truck2(truck, BARN2_X, BARN2_Y, current_id++, false);  // Bottom truck - flour/sugar
     
     // 5 children starting in vertical line going UP from y=50
-    std::thread child1(child, 500, 50, current_id++);   // Bottom of line (front)
-    std::thread child2(child, 500, 100, current_id++);  // 2nd in line
-    std::thread child3(child, 500, 150, current_id++);  // 3rd in line
-    std::thread child4(child, 500, 200, current_id++);  // 4th in line
-    std::thread child5(child, 500, 250, current_id++);  // Top of line (back)
+    std::thread child1(child, 800, 30, current_id++);   // Bottom of line (front)
+    std::thread child2(child, 800, 200, current_id++);  // 2nd in line
+    std::thread child3(child, 800, 400, current_id++);  // 3rd in line
+    std::thread child4(child, 800, 500, current_id++);  // 4th in line
+    std::thread child5(child, 800, 600, current_id++);  // Top of line (back)
     
     // Join threads
     display_thread.join();
@@ -895,3 +893,4 @@ void FarmLogic::start() {
        FarmLogic::run();
     }).detach();
 }
+
