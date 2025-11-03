@@ -44,14 +44,23 @@ int person_h = 90;
 int chicken_w = 45;
 int chicken_h = 45;
 
-// Key locations on the farm
+
 const int NEST1_X = 100, NEST1_Y = 500;
 const int NEST2_X = 700, NEST2_Y = 500;
 const int BARN1_X = 50, BARN1_Y = 150;   // Butter/eggs barn
 const int BARN2_X = 50, BARN2_Y = 50;  // Flour/sugar barn
-const int BAKERY_X = 550, BAKERY_Y = 150;
+const int STORAGE_X = 550, STORAGE_Y = 150;
 const int INTERSECTION_X = 300, INTERSECTION_Y = 150;
 const int SHOP_X = 650, SHOP_Y = 150;
+
+
+
+
+const int EGG_STORAGE_SHELF = STORAGE_Y -25;
+const int BUTTER_STORAGE_SHELF= STORAGE_Y -50;
+const int FLOUR_STORAGE_SHELF= STORAGE_Y -75;
+const int SUGAR_STORAGE_SHELF= STORAGE_Y -100;
+
 
 // Game state tracking
 struct Position {
@@ -128,20 +137,6 @@ bool check_collision(int x1, int y1, int w1, int h1,
              top1 < bottom2 || bottom1 > top2);
 }
 
-bool can_move_to(int id, int new_x, int new_y, int width, int height, int layer) {
-    std::lock_guard<std::mutex> lk(position_mtx);
-    
-    for (auto& [other_id, pos] : entity_positions) {
-        if (other_id != id && pos.layer == layer) {
-            if (check_collision(new_x, new_y, width, height,
-                              pos.x, pos.y, pos.width, pos.height)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 void update_position(int id, int x, int y, int width, int height, int layer) {
     std::lock_guard<std::mutex> lk(position_mtx);
     entity_positions[id] = {x, y, width, height, layer};
@@ -153,7 +148,6 @@ bool move_towards(DisplayObject &obj, int id, int target_x, int target_y,
     int dist_x = target_x - obj.x;
     int dist_y = target_y - obj.y;
     
-    // Calculate movement direction
     if (abs(dist_x) > speed) {
         dx = (dist_x > 0) ? speed : -speed;
     } else {
@@ -166,21 +160,17 @@ bool move_towards(DisplayObject &obj, int id, int target_x, int target_y,
         dy = dist_y;
     }
     
-    // Add some random vertical drift to spread chickens out
-    // 20% chance to add random vertical movement
+    
     if (std::rand() % 100 < 20) {
-        dy += (std::rand() % 3) - 1;  // -1, 0, or 1 extra vertical movement
+        dy += (std::rand() % 3) - 1; 
     }
     
-    // Check bounds first (no lock needed)
     if (out_of_bounds(obj, dx, dy)) {
         return false;
     }
     
-    // NOW lock once for all collision checks and updates
     std::lock_guard<std::mutex> lk(position_mtx);
     
-    // Lambda for collision checking (uses already-acquired lock)
     auto check_move = [&](int new_x, int new_y) -> bool {
         for (auto& [other_id, pos] : entity_positions) {
             if (other_id != id && pos.layer == layer) {
@@ -193,7 +183,6 @@ bool move_towards(DisplayObject &obj, int id, int target_x, int target_y,
         return true;
     };
     
-    // Try primary movement
     int new_x = obj.x + dx;
     int new_y = obj.y + dy;
     
@@ -203,9 +192,7 @@ bool move_towards(DisplayObject &obj, int id, int target_x, int target_y,
         return true;
     }
     
-    // If blocked, try moving in just one direction
     if (dx != 0 && dy != 0) {
-        // Randomly choose whether to try horizontal or vertical first
         if (std::rand() % 2 == 0) {
             // Try horizontal first
             if (check_move(obj.x + dx, obj.y)) {
@@ -235,44 +222,40 @@ bool move_towards(DisplayObject &obj, int id, int target_x, int target_y,
         }
     }
     
-    // Random dodge attempts - with MORE randomness
     std::vector<std::pair<int, int>> dodge_moves;
     
-    // Generate random dodge directions with varying speeds
+    //random dodge directions and speeds
     for (int i = 0; i < 8; i++) {
-        int rand_speed = speed + (std::rand() % 3) - 1;  // speed-1 to speed+1
+        int rand_speed = speed + (std::rand() % 3) - 1;  
         int rand_x = 0, rand_y = 0;
         
         switch (std::rand() % 8) {
-            case 0: rand_x = rand_speed; break;                      // Right
-            case 1: rand_x = -rand_speed; break;                     // Left
-            case 2: rand_y = rand_speed; break;                      // Down
-            case 3: rand_y = -rand_speed; break;                     // Up
-            case 4: rand_x = rand_speed; rand_y = rand_speed; break;   // Down-right
-            case 5: rand_x = -rand_speed; rand_y = rand_speed; break;  // Down-left
-            case 6: rand_x = rand_speed; rand_y = -rand_speed; break;  // Up-right
-            case 7: rand_x = -rand_speed; rand_y = -rand_speed; break; // Up-left
+            case 0: rand_x = rand_speed; break;                      
+            case 1: rand_x = -rand_speed; break;                     
+            case 2: rand_y = rand_speed; break;                      
+            case 3: rand_y = -rand_speed; break;                     
+            case 4: rand_x = rand_speed; rand_y = rand_speed; break;   
+            case 5: rand_x = -rand_speed; rand_y = rand_speed; break; 
+            case 6: rand_x = rand_speed; rand_y = -rand_speed; break; 
+            case 7: rand_x = -rand_speed; rand_y = -rand_speed; break; 
         }
         
-        // Bias towards vertical movement to spread chickens out
-        if (std::rand() % 100 < 40) {  // 40% chance to emphasize vertical
+        // vertical dodging is easier (mostly for chickens)
+        if (std::rand() % 100 < 40) { 
             rand_y = (std::rand() % 2 == 0) ? speed * 2 : -speed * 2;
         }
         
         dodge_moves.push_back({rand_x, rand_y});
     }
-    
-    // Shuffle for more randomness
+
+    //super random movement
     std::shuffle(dodge_moves.begin(), dodge_moves.end(), std::mt19937(std::random_device{}()));    
-    // Try each random dodge
     for (auto& [dodge_x, dodge_y] : dodge_moves) {
         if (!out_of_bounds(obj, dodge_x, dodge_y)) {
             int test_x = obj.x + dodge_x;
             int test_y = obj.y + dodge_y;
             
             if (check_move(test_x, test_y)) {
-                // Add extra randomness: only take this move 70% of the time
-                // This prevents getting stuck in patterns
                 if (std::rand() % 100 < 70) {
                     obj.setPos(test_x, test_y);
                     entity_positions[id] = {test_x, test_y, width, height, layer};
@@ -282,7 +265,6 @@ bool move_towards(DisplayObject &obj, int id, int target_x, int target_y,
         }
     }
     
-    // Last resort: wait (return false, chicken will pause briefly)
     return false;
 }
 
@@ -399,7 +381,6 @@ void chicken(int init_x, int init_y, int id, int starting_nest_idx) {
     }
 }
 
-
 void farmer(int init_x, int init_y, int id) {
     DisplayObject farmer("farmer", person_w, person_h, 2, id);
     farmer.setPos(init_x, init_y);
@@ -503,59 +484,228 @@ void farmer(int init_x, int init_y, int id) {
     }
 }
 
+// void truck(int init_x, int init_y, int id, bool is_barn1) {
+//     DisplayObject truck("truck", truck_w, truck_h, 2, id);
+//     truck.setPos(init_x, init_y);
+//     update_position(id, init_x, init_y, truck_w, truck_h, 2);
+    
+//     {
+//         std::lock_guard<std::mutex> lk(display_mtx);
+//         truck.updateFarm();
+//     }
+    
+//     int barn_x = BARN1_X;
+//     int barn_y = is_barn1 ? BARN1_Y : BARN2_Y;
+    
+//     struct Cargo {
+//         int eggs = 0;
+//         int butter = 0;
+//         int flour = 0;
+//         int sugar = 0;
+//     } cargo;
+    
+//     while(true) {
+//         // Move to barn
+//         while (abs(truck.x - barn_x) > 10 || abs(truck.y - barn_y) > 10) {
+//             if (move_towards(truck, id, barn_x, barn_y, 5, truck_w, truck_h, 2)) {
+//                 {
+//                     std::lock_guard<std::mutex> disp_lk(display_mtx);
+//                     truck.updateFarm();
+//                 }
+//             }
+//             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//         }
+        
+//         // Load at barn
+//         {
+//             std::unique_lock<std::mutex> barn_lk(barn_mtx);
+            
+//             if (is_barn1) {
+//                 barn_cv.wait(barn_lk, [&] { return barn1_state.eggs >= 3; });
+//                 cargo.eggs = std::min(3, barn1_state.eggs);
+//                 cargo.butter = 3;
+//                 barn1_state.eggs -= cargo.eggs;
+//                 barn1_state.butter += 3;
+                
+//                 {
+//                     std::lock_guard<std::mutex> stats_lk(stats_mtx);
+//                     global_stats.butter_produced += 3;
+//                 }
+//             } else {
+//                 cargo.flour = 3;
+//                 cargo.sugar = 3;
+//                 barn2_state.flour += 3;
+//                 barn2_state.sugar += 3;
+                
+//                 {
+//                     std::lock_guard<std::mutex> stats_lk(stats_mtx);
+//                     global_stats.flour_produced += 3;
+//                     global_stats.sugar_produced += 3;
+//                 }
+//             }
+//         }
+        
+//         // Path to intersection: Move horizontally
+//         while (abs(truck.x - INTERSECTION_X) > 10) {
+//             if (move_towards(truck, id, INTERSECTION_X, truck.y, 5, truck_w, truck_h, 2)) {
+//                 {
+//                     std::lock_guard<std::mutex> disp_lk(display_mtx);
+//                     truck.updateFarm();
+//                 }
+//             }
+//             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//         }
+        
+//         // Request intersection access
+//         {
+//             std::unique_lock<std::mutex> int_lk(intersection_mtx);
+//             truck_queue.push(id);
+            
+//             intersection_cv.wait(int_lk, [&] {
+//                 return !intersection_occupied && 
+//                        !truck_queue.empty() && 
+//                        truck_queue.front() == id;
+//             });
+            
+//             intersection_occupied = true;
+//             truck_queue.pop();
+//         }
+        
+//         // Move through intersection to bakery
+//         while (abs(truck.y - STORAGE_Y) > 10) {
+//             if (move_towards(truck, id, truck.x, STORAGE_Y, 5, truck_w, truck_h, 2)) {
+//                 {
+//                     std::lock_guard<std::mutex> disp_lk(display_mtx);
+//                     truck.updateFarm();
+//                 }
+//             }
+//             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//         }
+        
+//         while (abs(truck.x - STORAGE_X) > 10) {
+//             if (move_towards(truck, id, STORAGE_X, truck.y, 5, truck_w, truck_h, 2)) {
+//                 {
+//                     std::lock_guard<std::mutex> disp_lk(display_mtx);
+//                     truck.updateFarm();
+//                 }
+//             }
+//             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//         }
+        
+//         // Release intersection
+//         {
+//             std::lock_guard<std::mutex> int_lk(intersection_mtx);
+//             intersection_occupied = false;
+//             intersection_cv.notify_all();
+//         }
+        
+//         // Unload at bakery
+//         {
+//             std::unique_lock<std::mutex> bakery_lk(bakery_mtx);
+            
+//             bakery_cv.wait(bakery_lk, [&] {
+//                 return (bakery_state.eggs + cargo.eggs <= 6) &&
+//                        (bakery_state.butter + cargo.butter <= 6) &&
+//                        (bakery_state.flour + cargo.flour <= 6) &&
+//                        (bakery_state.sugar + cargo.sugar <= 6);
+//             });
+            
+//             bakery_state.eggs += cargo.eggs;
+//             bakery_state.butter += cargo.butter;
+//             bakery_state.flour += cargo.flour;
+//             bakery_state.sugar += cargo.sugar;
+            
+//             cargo = {};
+//             oven_cv.notify_all();
+//         }
+        
+//         // Return path: Back through intersection
+//         while (abs(truck.x - INTERSECTION_X) > 10) {
+//             if (move_towards(truck, id, INTERSECTION_X, truck.y, 5, truck_w, truck_h, 2)) {
+//                 {
+//                     std::lock_guard<std::mutex> disp_lk(display_mtx);
+//                     truck.updateFarm();
+//                 }
+//             }
+//             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//         }
+        
+//         // Move back to barn lane
+//         int return_y = is_barn1 ? BARN1_Y : BARN2_Y;
+//         while (abs(truck.y - return_y) > 10) {
+//             if (move_towards(truck, id, truck.x, return_y, 5, truck_w, truck_h, 2)) {
+//                 {
+//                     std::lock_guard<std::mutex> disp_lk(display_mtx);
+//                     truck.updateFarm();
+//                 }
+//             }
+//             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//         }
+        
+//         // Move to barn
+//         while (abs(truck.x - barn_x) > 10) {
+//             if (move_towards(truck, id, barn_x, truck.y, 5, truck_w, truck_h, 2)) {
+//                 {
+//                     std::lock_guard<std::mutex> disp_lk(display_mtx);
+//                     truck.updateFarm();
+//                 }
+//             }
+//             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//         }
+//     }
+// }
+
 void truck(int init_x, int init_y, int id, bool is_barn1) {
     DisplayObject truck("truck", truck_w, truck_h, 2, id);
     truck.setPos(init_x, init_y);
     update_position(id, init_x, init_y, truck_w, truck_h, 2);
-    
+
     {
         std::lock_guard<std::mutex> lk(display_mtx);
         truck.updateFarm();
     }
-    
+
     int barn_x = BARN1_X;
     int barn_y = is_barn1 ? BARN1_Y : BARN2_Y;
-    
+
     struct Cargo {
         int eggs = 0;
         int butter = 0;
         int flour = 0;
         int sugar = 0;
     } cargo;
-    
-    while(true) {
-        // Move to barn
-        while (abs(truck.x - barn_x) > 10 || abs(truck.y - barn_y) > 10) {
+
+    while (true) {
+        while (abs(truck.x - barn_x) > 90 || abs(truck.y - barn_y) > 90) {
             if (move_towards(truck, id, barn_x, barn_y, 5, truck_w, truck_h, 2)) {
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    truck.updateFarm();
-                }
+                std::cout<<"MEOW";
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                truck.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
-        // Load at barn
+
         {
             std::unique_lock<std::mutex> barn_lk(barn_mtx);
-            
+
             if (is_barn1) {
+                // Wait until enough eggs are available
                 barn_cv.wait(barn_lk, [&] { return barn1_state.eggs >= 3; });
-                cargo.eggs = std::min(3, barn1_state.eggs);
-                cargo.butter = 3;
-                barn1_state.eggs -= cargo.eggs;
-                barn1_state.butter += 3;
-                
+
+                cargo.eggs = 3;
+                cargo.butter = 3;  // butter is produced per trip
+                barn1_state.eggs -= 3;
+
                 {
                     std::lock_guard<std::mutex> stats_lk(stats_mtx);
+                    global_stats.eggs_used += 3;
                     global_stats.butter_produced += 3;
                 }
             } else {
+                // Truck 2 can always be loaded
                 cargo.flour = 3;
                 cargo.sugar = 3;
-                barn2_state.flour += 3;
-                barn2_state.sugar += 3;
-                
+
                 {
                     std::lock_guard<std::mutex> stats_lk(stats_mtx);
                     global_stats.flour_produced += 3;
@@ -563,116 +713,101 @@ void truck(int init_x, int init_y, int id, bool is_barn1) {
                 }
             }
         }
-        
-        // Path to intersection: Move horizontally
+
         while (abs(truck.x - INTERSECTION_X) > 10) {
             if (move_towards(truck, id, INTERSECTION_X, truck.y, 5, truck_w, truck_h, 2)) {
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    truck.updateFarm();
-                }
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                truck.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
+
         // Request intersection access
         {
             std::unique_lock<std::mutex> int_lk(intersection_mtx);
             truck_queue.push(id);
-            
+
             intersection_cv.wait(int_lk, [&] {
-                return !intersection_occupied && 
-                       !truck_queue.empty() && 
-                       truck_queue.front() == id;
+                return !intersection_occupied && !truck_queue.empty() && truck_queue.front() == id;
             });
-            
+
             intersection_occupied = true;
             truck_queue.pop();
         }
-        
-        // Move through intersection to bakery
-        while (abs(truck.y - BAKERY_Y) > 10) {
-            if (move_towards(truck, id, truck.x, BAKERY_Y, 5, truck_w, truck_h, 2)) {
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    truck.updateFarm();
-                }
+
+        // move through intersection to storage
+        while (abs(truck.y - STORAGE_Y) > 10) {
+            if (move_towards(truck, id, truck.x, STORAGE_Y, 5, truck_w, truck_h, 2)) {
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                truck.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
-        while (abs(truck.x - BAKERY_X) > 10) {
-            if (move_towards(truck, id, BAKERY_X, truck.y, 5, truck_w, truck_h, 2)) {
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    truck.updateFarm();
-                }
+
+        while (abs(truck.x - STORAGE_X) > 10) {
+            if (move_towards(truck, id, STORAGE_X, truck.y, 5, truck_w, truck_h, 2)) {
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                truck.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
+
         // Release intersection
         {
             std::lock_guard<std::mutex> int_lk(intersection_mtx);
             intersection_occupied = false;
             intersection_cv.notify_all();
         }
-        
-        // Unload at bakery
+
         {
             std::unique_lock<std::mutex> bakery_lk(bakery_mtx);
-            
+
             bakery_cv.wait(bakery_lk, [&] {
                 return (bakery_state.eggs + cargo.eggs <= 6) &&
                        (bakery_state.butter + cargo.butter <= 6) &&
                        (bakery_state.flour + cargo.flour <= 6) &&
                        (bakery_state.sugar + cargo.sugar <= 6);
             });
-            
+
             bakery_state.eggs += cargo.eggs;
             bakery_state.butter += cargo.butter;
             bakery_state.flour += cargo.flour;
             bakery_state.sugar += cargo.sugar;
-            
+
             cargo = {};
+
             oven_cv.notify_all();
+            bakery_cv.notify_all();  // wake trucks waiting to unload
         }
-        
-        // Return path: Back through intersection
+
         while (abs(truck.x - INTERSECTION_X) > 10) {
             if (move_towards(truck, id, INTERSECTION_X, truck.y, 5, truck_w, truck_h, 2)) {
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    truck.updateFarm();
-                }
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                truck.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
-        // Move back to barn lane
+
         int return_y = is_barn1 ? BARN1_Y : BARN2_Y;
         while (abs(truck.y - return_y) > 10) {
             if (move_towards(truck, id, truck.x, return_y, 5, truck_w, truck_h, 2)) {
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    truck.updateFarm();
-                }
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                truck.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
-        // Move to barn
+
         while (abs(truck.x - barn_x) > 10) {
             if (move_towards(truck, id, barn_x, truck.y, 5, truck_w, truck_h, 2)) {
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    truck.updateFarm();
-                }
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                truck.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
 }
+
+
 
 void oven_thread() {
     while(true) {
@@ -722,7 +857,6 @@ void oven_thread() {
 void child(int init_x, int init_y, int id) {
     DisplayObject child("child", person_w, person_h, 2, id);
     
-    // Line up children vertically going UP from base
     static std::mutex line_position_mtx;
     static int next_in_line = 0;
     int my_queue_position;
@@ -735,8 +869,8 @@ void child(int init_x, int init_y, int id) {
     int line_x = 775; 
     int base_line_y = 60;  
     
-    int line_y = base_line_y + (my_queue_position * 80); 
-    
+    int line_y = base_line_y + (my_queue_position * (person_h + 10));
+
     child.setPos(line_x, line_y);
     update_position(id, line_x, line_y, person_w, person_h, 2);
     
@@ -750,6 +884,9 @@ void child(int init_x, int init_y, int id) {
         {
             std::unique_lock<std::mutex> shop_lk(shop_mtx);
             child_queue.push(id);
+
+            //do i need this?
+            shop_cv.notify_all();
             
             shop_cv.wait(shop_lk, [&] {
                 return current_shopper == -1 && 
@@ -759,23 +896,26 @@ void child(int init_x, int init_y, int id) {
             
             child_queue.pop();
             current_shopper = id;
+
         }
         
         // Move to shop
-        while (abs(child.x - SHOP_X) > 20 || abs(child.y - SHOP_Y) > 20) {
-            move_towards(child, id, SHOP_X, SHOP_Y, 4, person_w, person_h, 2);
-            {
-                std::lock_guard<std::mutex> disp_lk(display_mtx);
-                child.updateFarm();
+        while (abs(child.x - SHOP_X) > 5 || abs(child.y - SHOP_Y) > 5) {
+            if (move_towards(child, id, SHOP_X, SHOP_Y, 4, person_w, person_h, 2)){
+                {
+                    std::lock_guard<std::mutex> disp_lk(display_mtx);
+                    child.updateFarm();
+                }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
+
+
         // Buy cakes
         int want_cakes = (std::rand() % 6) + 1;
         {
             std::unique_lock<std::mutex> bakery_lk(bakery_mtx);
-            shop_cv.wait(bakery_lk, [&] {
+            bakery_cv.wait(bakery_lk, [&] {
                 return bakery_state.cakes >= want_cakes;
             });
             
@@ -853,22 +993,18 @@ void cow(int init_x, int init_y, int id) {
 }
 
 void FarmLogic::run() {
-    // Initialize global stats
     global_stats = BakeryStats();
     
     std::srand(std::time(0));
     
     int current_id = 0;
     
-    // Create static objects
     DisplayObject nest("nest", 100, 80, 0, 1000);
     DisplayObject nest2("nest", 100, 80, 0, 1001);
     
-    // Initialize nest states
     nest_states[1000] = NestState();
     nest_states[1001] = NestState();
     
-    // Create egg display objects for nests
     std::vector<DisplayObject*> nest1_egg_objs;
     std::vector<DisplayObject*> nest2_egg_objs;
     
@@ -885,33 +1021,28 @@ void FarmLogic::run() {
         nest2_egg_objs[i]->setPos(-100, -100);
     }
 
-    
-    // Create barns and bakery
     DisplayObject barn1("barn", 100, 100, 0, current_id++);
     DisplayObject barn2("barn", 100, 100, 0, current_id++);
     DisplayObject bakery("bakery", 250, 250, 0, current_id++);
-    
-    // Create storage display items (for visual feedback)
-    // Bakery storage area items
+
+    // const int STORAGE_X = 550, STORAGE_Y = 150;
+
     DisplayObject* storage_eggs = new DisplayObject("egg", 30, 30, 1, current_id++);
     DisplayObject* storage_butter = new DisplayObject("butter", 30, 30, 1, current_id++);
     DisplayObject* storage_flour = new DisplayObject("flour", 30, 30, 1, current_id++);
     DisplayObject* storage_sugar = new DisplayObject("sugar", 30, 30, 1, current_id++);
     
-    // Position storage items near bakery
-    storage_eggs->setPos(BAKERY_X - 80, BAKERY_Y + 50);
-    storage_butter->setPos(BAKERY_X - 40, BAKERY_Y + 50);
-    storage_flour->setPos(BAKERY_X, BAKERY_Y + 50);
-    storage_sugar->setPos(BAKERY_X + 40, BAKERY_Y + 50);
+    storage_eggs->setPos(STORAGE_X , EGG_STORAGE_SHELF);
+    storage_butter->setPos(STORAGE_X, BUTTER_STORAGE_SHELF);
+    storage_flour->setPos(STORAGE_X, FLOUR_STORAGE_SHELF);
+    storage_sugar->setPos(STORAGE_X , SUGAR_STORAGE_SHELF);
     
-    // Position static objects
     nest.setPos(NEST1_X, NEST1_Y);
     nest2.setPos(NEST2_X, NEST2_Y);
     barn1.setPos(BARN1_X, BARN1_Y);
     barn2.setPos(BARN2_X, BARN2_Y);
-    bakery.setPos(BAKERY_X, BAKERY_Y);
+    bakery.setPos(STORAGE_X, STORAGE_Y);
     
-    // Update farm with static objects
     nest.updateFarm();
     nest2.updateFarm();
     barn1.updateFarm();
@@ -926,7 +1057,7 @@ void FarmLogic::run() {
     std::thread display_thread(display, std::ref(global_stats));
     std::thread oven(oven_thread);
     
-    // 1 farmer starting away from trucks
+    // 1 farmer 
     std::thread farmer1(farmer, 150, 250, current_id++);
     
     // 3 chickens 
@@ -939,16 +1070,17 @@ void FarmLogic::run() {
     std::thread cow1(cow, 570, 300, current_id++);  
     std::thread cow2(cow, 650, 300, current_id++);  
     
-    // 2 trucks - TOP truck for eggs/butter, BOTTOM truck for flour/sugar
-    std::thread truck1(truck, BARN1_X, BARN1_Y, current_id++, true);   // Top truck - eggs/butter
-    std::thread truck2(truck, BARN2_X, BARN2_Y, current_id++, false);  // Bottom truck - flour/sugar
+
+    //2 truck
+    std::thread truck1(truck, BARN1_X+90, BARN1_Y, current_id++, true);   //  eggs/butter
+    std::thread truck2(truck, BARN2_X+90, BARN2_Y, current_id++, false);  // flour/sugar
     
-    // // 5 children starting in vertical line going UP from y=30
-    // std::thread child1(child, 800, 30, current_id++);   // Bottom of line (front)
-    // std::thread child2(child, 800, 200, current_id++);  // 2nd in line
-    // std::thread child3(child, 800, 400, current_id++);  // 3rd in line
-    // std::thread child4(child, 800, 500, current_id++);  // 4th in line
-    // std::thread child5(child, 800, 600, current_id++);  // Top of line (back)
+    // 5 kids
+    std::thread child1(child, 800, 30, current_id++);  
+    std::thread child2(child, 800, 200, current_id++); 
+    std::thread child3(child, 800, 400, current_id++); 
+    std::thread child4(child, 800, 500, current_id++); 
+    std::thread child5(child, 800, 600, current_id++); 
     
     // Join threads
     display_thread.join();
@@ -961,11 +1093,11 @@ void FarmLogic::run() {
     cow2.join();
     truck1.join();
     truck2.join();
-    // child1.join();
-    // child2.join();
-    // child3.join();
-    // child4.join();
-    // child5.join();
+    child1.join();
+    child2.join();
+    child3.join();
+    child4.join();
+    child5.join();
     farmer1.join();
 }
 
