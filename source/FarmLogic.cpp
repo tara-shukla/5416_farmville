@@ -856,60 +856,63 @@ void oven_thread() {
 
 void child(int init_x, int init_y, int id) {
     DisplayObject child("child", person_w, person_h, 2, id);
-    
-    static std::mutex line_position_mtx;
-    static int next_in_line = 0;
-    int my_queue_position;
-    
-    {
-        std::lock_guard<std::mutex> lk(line_position_mtx);
-        my_queue_position = next_in_line++;
-    }
-    
-    int line_x = 775; 
-    int base_line_y = 60;  
-    
-    int line_y = base_line_y + (my_queue_position * (person_h + 10));
 
+    static std::mutex line_order_mtx;
+    static std::queue<int> line_order; // represents front (bottom) -> back (top)
+    static bool initialized = false;
+
+    int my_queue_position;
+
+    // Initialize queue order once (in thread-safe manner)
+    {
+        std::lock_guard<std::mutex> lk(line_order_mtx);
+        if (!initialized) initialized = true;
+        line_order.push(id);
+        my_queue_position = line_order.size() - 1; // visual position (0 = bottom)
+    }
+
+    const int line_x = 775;
+    const int base_line_y = 60;
+
+    auto get_y_from_position = [&](int pos) {
+        return base_line_y + (pos * (person_h + 10));
+    };
+
+    int line_y = get_y_from_position(my_queue_position);
     child.setPos(line_x, line_y);
     update_position(id, line_x, line_y, person_w, person_h, 2);
-    
     {
         std::lock_guard<std::mutex> lk(display_mtx);
         child.updateFarm();
     }
-    
-    while(true) {
-        // Wait for turn to shop (front of line is at bottom)
+
+    while (true) {
+        // Wait for turn (front of line = bottom visually)
         {
             std::unique_lock<std::mutex> shop_lk(shop_mtx);
-            child_queue.push(id);
-
-            //do i need this?
-            shop_cv.notify_all();
-            
             shop_cv.wait(shop_lk, [&] {
-                return current_shopper == -1 && 
-                       !child_queue.empty() && 
-                       child_queue.front() == id;
+                std::lock_guard<std::mutex> lk(line_order_mtx);
+                return current_shopper == -1 &&
+                       !line_order.empty() &&
+                       line_order.front() == id;
             });
-            
-            child_queue.pop();
-            current_shopper = id;
 
+            // It’s my turn now
+            {
+                std::lock_guard<std::mutex> lk(line_order_mtx);
+                line_order.pop();
+            }
+            current_shopper = id;
         }
-        
+
         // Move to shop
         while (abs(child.x - SHOP_X) > 5 || abs(child.y - SHOP_Y) > 5) {
-            if (move_towards(child, id, SHOP_X, SHOP_Y, 4, person_w, person_h, 2)){
-                {
-                    std::lock_guard<std::mutex> disp_lk(display_mtx);
-                    child.updateFarm();
-                }
+            if (move_towards(child, id, SHOP_X, SHOP_Y, 4, person_w, person_h, 2)) {
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                child.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-
 
         // Buy cakes
         int want_cakes = (std::rand() % 6) + 1;
@@ -918,55 +921,56 @@ void child(int init_x, int init_y, int id) {
             bakery_cv.wait(bakery_lk, [&] {
                 return bakery_state.cakes >= want_cakes;
             });
-            
             bakery_state.cakes -= want_cakes;
-            
             {
                 std::lock_guard<std::mutex> stats_lk(stats_mtx);
                 global_stats.cakes_sold += want_cakes;
             }
         }
-        
-        // Leave shop
+
+        // Leave shop (free spot for next child)
         {
             std::lock_guard<std::mutex> shop_lk(shop_mtx);
             current_shopper = -1;
             shop_cv.notify_all();
         }
-        
-        // Move back to end of line (top of the vertical queue)
+
+        // Go back to top (end) of the line
         {
-            std::lock_guard<std::mutex> lk(line_position_mtx);
-            // Move to back (which is top position, index 4)
-            my_queue_position = 4;
+            std::lock_guard<std::mutex> lk(line_order_mtx);
+            line_order.push(id);
+            my_queue_position = line_order.size() - 1;
         }
-        
-        // Calculate new position at back of line (top)
-        line_y = base_line_y + (my_queue_position * 50);
-        
-        // Move to back of line position
-        while (abs(child.x - line_x) > 10 || abs(child.y - line_y) > 10) {
-            move_towards(child, id, line_x, line_y, 4, person_w, person_h, 2);
+
+        int new_y = get_y_from_position(my_queue_position);
+        while (abs(child.x - line_x) > 10 || abs(child.y - new_y) > 10) {
+            move_towards(child, id, line_x, new_y, 4, person_w, person_h, 2);
             {
                 std::lock_guard<std::mutex> disp_lk(display_mtx);
                 child.updateFarm();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
-        // "Eat" cake
+
+        // “Eat” cake
         std::this_thread::sleep_for(std::chrono::seconds(2));
-        
-        // Rotate position - everyone moves down one position
+
+        // Update visual position based on current queue order
         {
-            std::lock_guard<std::mutex> lk(line_position_mtx);
-            my_queue_position = (my_queue_position - 1 + 5) % 5;  // Move down in line
+            std::lock_guard<std::mutex> lk(line_order_mtx);
+            std::queue<int> tmp = line_order;
+            int pos = 0;
+            while (!tmp.empty()) {
+                if (tmp.front() == id) break;
+                tmp.pop();
+                pos++;
+            }
+            my_queue_position = pos;
         }
-        
-        // Update position in line
-        line_y = base_line_y + (my_queue_position * 50);
-        while (abs(child.y - line_y) > 10) {
-            move_towards(child, id, child.x, line_y, 4, person_w, person_h, 2);
+
+        int updated_y = get_y_from_position(my_queue_position);
+        while (abs(child.y - updated_y) > 5) {
+            move_towards(child, id, line_x, updated_y, 4, person_w, person_h, 2);
             {
                 std::lock_guard<std::mutex> disp_lk(display_mtx);
                 child.updateFarm();
@@ -975,6 +979,7 @@ void child(int init_x, int init_y, int id) {
         }
     }
 }
+
 
 void cow(int init_x, int init_y, int id) {
     DisplayObject cow("cow", cow_w, cow_h, 2, id);
