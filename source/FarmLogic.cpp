@@ -47,8 +47,8 @@ int chicken_h = 45;
 // Key locations on the farm
 const int NEST1_X = 100, NEST1_Y = 500;
 const int NEST2_X = 700, NEST2_Y = 500;
-const int BARN1_X = 50, BARN1_Y = 50;   // Butter/eggs barn
-const int BARN2_X = 50, BARN2_Y = 150;  // Flour/sugar barn
+const int BARN1_X = 50, BARN1_Y = 150;   // Butter/eggs barn
+const int BARN2_X = 50, BARN2_Y = 50;  // Flour/sugar barn
 const int BAKERY_X = 550, BAKERY_Y = 150;
 const int INTERSECTION_X = 300, INTERSECTION_Y = 150;
 const int SHOP_X = 650, SHOP_Y = 150;
@@ -147,9 +147,6 @@ void update_position(int id, int x, int y, int width, int height, int layer) {
     entity_positions[id] = {x, y, width, height, layer};
 }
 
-// Path helper - move towards target with collision avoidance (OPTIMIZED)
-// Path helper - move towards target with collision avoidance (IMPROVED)
-// Path helper - move towards target with collision avoidance (RANDOM & FREE)
 bool move_towards(DisplayObject &obj, int id, int target_x, int target_y, 
                   int speed, int width, int height, int layer) {
     int dx = 0, dy = 0;
@@ -300,7 +297,6 @@ void display(BakeryStats& stats) {
     }
 }
 
-// Chicken - moves between nests on a defined path
 void chicken(int init_x, int init_y, int id, int starting_nest_idx) {
     DisplayObject chicken("chicken", chicken_w, chicken_h, 2, id);
     chicken.setPos(init_x, init_y);
@@ -402,7 +398,8 @@ void chicken(int init_x, int init_y, int id, int starting_nest_idx) {
         std::this_thread::yield();
     }
 }
-// Farmer - follows path between barn and nests
+
+
 void farmer(int init_x, int init_y, int id) {
     DisplayObject farmer("farmer", person_w, person_h, 2, id);
     farmer.setPos(init_x, init_y);
@@ -421,10 +418,10 @@ void farmer(int init_x, int init_y, int id) {
         int nest_x = (target_nest_id == 1000) ? NEST1_X : NEST2_X;
         int nest_y = (target_nest_id == 1000) ? NEST1_Y : NEST2_Y;
         
-        // Approach from below - target a position below the nest
-        int approach_y = nest_y - 60;  // Approach from 60 units below
         
-        // Move toward nest from below
+        int approach_y = nest_y - 60; 
+        
+        //move toward nest from below
         int attempts = 0;
         while ((abs(farmer.x - nest_x) > 30 || abs(farmer.y - approach_y) > 30) && attempts < 300) {
             move_towards(farmer, id, nest_x, approach_y, 5, person_w, person_h, 2);
@@ -436,7 +433,7 @@ void farmer(int init_x, int init_y, int id) {
             attempts++;
         }
         
-        // Now move up to the nest for collection
+        //move up to the nest for collection
         while ((abs(farmer.x - nest_x) > 30 || abs(farmer.y - nest_y) > 30) && attempts < 350) {
             move_towards(farmer, id, nest_x, nest_y, 5, person_w, person_h, 2);
             {
@@ -447,25 +444,18 @@ void farmer(int init_x, int init_y, int id) {
             attempts++;
         }
         
-        // Collect eggs at nest
         {
             std::unique_lock<std::mutex> nest_lk(nest_mtx);
-            
-            // Wait for nest to be unoccupied
-            nest_cv.wait(nest_lk, [&] {
-                return !nest_states[target_nest_id].occupied;
+            bool got_eggs = nest_cv.wait_for(nest_lk, std::chrono::seconds(3), [&] {
+                return !nest_states[target_nest_id].occupied &&
+                       nest_states[target_nest_id].egg_count > 0;
             });
-            
-            if (nest_states[target_nest_id].egg_count > 0) {
+
+            if (got_eggs) {
                 int eggs_collected = nest_states[target_nest_id].egg_count;
                 nest_states[target_nest_id].egg_count = 0;
                 nest_states[target_nest_id].eggs_by_chicken.clear();
-                
-                {
-                    std::lock_guard<std::mutex> barn_lk(barn_mtx);
-                    barn1_state.eggs += eggs_collected;
-                }
-                
+
                 {
                     std::lock_guard<std::mutex> disp_lk(display_mtx);
                     for (int i = 0; i < eggs_collected; i++) {
@@ -475,34 +465,44 @@ void farmer(int init_x, int init_y, int id) {
                         }
                     }
                 }
-                
-                barn_cv.notify_all();
+                {
+                    int barn_target_y = BARN1_Y + 20;
+                    attempts = 0;
+                    while ((abs(farmer.x - BARN1_X) > 30 || abs(farmer.y - barn_target_y) > 30) && attempts < 200) {
+                        move_towards(farmer, id, BARN1_X, barn_target_y, 5, person_w, person_h, 2);
+                        {
+                            std::lock_guard<std::mutex> disp_lk(display_mtx);
+                            farmer.updateFarm();
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        attempts++;
+                    }
+
+                    // wait for access to barn (truck may be using it)
+                    std::unique_lock<std::mutex> barn_lk(barn_mtx);
+                    
+
+                    barn1_state.eggs += eggs_collected;
+                    barn_cv.notify_all();
+                }
+
+    
+                nest_cv.notify_all();
+            } 
+            else {
+                // waited too long — switch nests
+                current_nest = (current_nest + 1) % nest_ids.size();
+                nest_cv.notify_all();
+                continue;
             }
-            
-            nest_cv.notify_all();
         }
-        
-        // Move back toward barn area (doesn't have to reach exact position)
-        attempts = 0;
-        while ((abs(farmer.x - BARN1_X) > 50 || abs(farmer.y - BARN1_Y) > 50) && attempts < 200) {
-            move_towards(farmer, id, BARN1_X, BARN1_Y, 5, person_w, person_h, 2);
-            {
-                std::lock_guard<std::mutex> disp_lk(display_mtx);
-                farmer.updateFarm();
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            attempts++;
-        }
-        
-        // Switch to next nest
+
         current_nest = (current_nest + 1) % nest_ids.size();
         
-        // Wait before next collection round
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 }
 
-// Truck - follows specific path with intersection synchronization
 void truck(int init_x, int init_y, int id, bool is_barn1) {
     DisplayObject truck("truck", truck_w, truck_h, 2, id);
     truck.setPos(init_x, init_y);
@@ -674,7 +674,6 @@ void truck(int init_x, int init_y, int id, bool is_barn1) {
     }
 }
 
-// Oven thread
 void oven_thread() {
     while(true) {
         std::unique_lock<std::mutex> bakery_lk(bakery_mtx);
@@ -720,7 +719,6 @@ void oven_thread() {
     }
 }
 
-// Child - queues vertically and enters shop one by one
 void child(int init_x, int init_y, int id) {
     DisplayObject child("child", person_w, person_h, 2, id);
     
