@@ -12,19 +12,20 @@
 #include <iostream>
 #include <cmath>
 #include <random>
-// Display synchronization
+
+
+
 std::mutex display_mtx;
 
-// Game state synchronization
-std::mutex position_mtx;  // For tracking entity positions
-std::mutex nest_mtx;       // For nest operations
-std::mutex barn_mtx;       // For barn operations  
-std::mutex bakery_mtx;     // For bakery operations
-std::mutex shop_mtx;       // For shop operations
-std::mutex intersection_mtx; // For truck intersection
-std::mutex stats_mtx;      // For stats updates
+std::mutex position_mtx; 
+std::mutex nest_mtx;       
+std::mutex barn_mtx;       
+std::mutex bakery_mtx;     
+std::mutex shop_mtx;       
+std::mutex intersection_mtx; 
+std::mutex stats_mtx;      
 
-// Condition variables for waiting
+// condition variables for waiting
 std::condition_variable nest_cv;
 std::condition_variable barn_cv;
 std::condition_variable bakery_cv;
@@ -32,7 +33,7 @@ std::condition_variable oven_cv;
 std::condition_variable shop_cv;
 std::condition_variable intersection_cv;
 
-// Object dimensions
+// object dimensions
 int egg_w = 20;
 int egg_h = 20;
 int cow_w = 80;
@@ -45,13 +46,18 @@ int chicken_w = 45;
 int chicken_h = 45;
 
 
+const int OVEN_X = 550;  
+const int OVEN_Y = 300;  
+const int CAKE_W = 30;
+const int CAKE_H = 30;
+
 const int NEST1_X = 100, NEST1_Y = 500;
 const int NEST2_X = 700, NEST2_Y = 500;
 const int BARN1_X = 50, BARN1_Y = 150;   // Butter/eggs barn
 const int BARN2_X = 50, BARN2_Y = 50;  // Flour/sugar barn
 const int STORAGE_X = 550, STORAGE_Y = 150;
 const int INTERSECTION_X = 300, INTERSECTION_Y = 150;
-const int SHOP_X = 650, SHOP_Y = 150;
+const int SHOP_X = 650, SHOP_Y = 80;
 
 const int STOCK_X = 650, STOCK_Y = 200;
 
@@ -62,7 +68,6 @@ const int FLOUR_STORAGE_SHELF= STORAGE_Y -75;
 const int SUGAR_STORAGE_SHELF= STORAGE_Y -100;
 
 
-// Game state tracking
 struct Position {
     int x, y;
     int width, height;
@@ -123,12 +128,15 @@ std::queue<int> truck_queue;
 // mapping display objects like eggs and storage items
 std::map<int, std::vector<DisplayObject*>> nest_eggs;
 std::map<std::string, std::vector<DisplayObject*>> storage_items;
+std::vector<DisplayObject*> oven_cakes;  
+std::vector<DisplayObject*> stock_cakes;  
+std::vector<DisplayObject*> oven_ingredients;
 
 
-// Global stats tracking
+// global stats tracking
 BakeryStats global_stats;
 
-// Helper functions
+// helper functions
 bool out_of_bounds(DisplayObject &obj, int x, int y) {
     int left = (obj.x+x)-(obj.width/2);
     int right = (obj.x+x)+(obj.width/2);
@@ -309,6 +317,7 @@ void chicken(int init_x, int init_y, int id, int starting_nest_idx) {
     std::uniform_int_distribution<> egg_dist(1, 3);
 
     int current_nest_idx = starting_nest_idx;
+
     while(true) {
         
         int target_nest_id = nest_ids[current_nest_idx];
@@ -317,8 +326,8 @@ void chicken(int init_x, int init_y, int id, int starting_nest_idx) {
         
         // Move toward nest 
         int attempts = 0;
-        while ((abs(chicken.x - nest_x) > 20 || abs(chicken.y - nest_y) > 20) && attempts < 100) {
-            move_towards(chicken, id, nest_x, nest_y, 4, chicken_w, chicken_h, 2);
+        while ((abs(chicken.x - nest_x) > 20 || abs(chicken.y - nest_y) > 20) && attempts < 50) {
+            move_towards(chicken, id, nest_x, nest_y, 8, chicken_w, chicken_h, 2);
             
             {
                 std::lock_guard<std::mutex> disp_lk(display_mtx);
@@ -386,9 +395,8 @@ void chicken(int init_x, int init_y, int id, int starting_nest_idx) {
                 nest_cv.notify_all();
             }
         }
-        //switch to the other nest 
         current_nest_idx = (current_nest_idx + 1) % nest_ids.size();
-        
+
         std::this_thread::yield();
     }
 }
@@ -461,7 +469,7 @@ void farmer(int init_x, int init_y, int id) {
                 {
                     int barn_target_y = BARN1_Y + 80;
                     attempts = 0;
-                    while ((abs(farmer.x - BARN1_X) > 30 || abs(farmer.y - barn_target_y) > 10) && attempts < 200) {
+                    while ((abs(farmer.x - BARN1_X) > 10 || abs(farmer.y - barn_target_y) > 10) && attempts < 200) {
                         move_towards(farmer, id, BARN1_X, barn_target_y, 5, person_w, person_h, 2);
                         {
                             std::lock_guard<std::mutex> disp_lk(display_mtx);
@@ -495,6 +503,7 @@ void farmer(int init_x, int init_y, int id) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 }
+
 void truck(int init_x, int init_y, int id, bool is_barn1) {
     DisplayObject truck("truck", truck_w, truck_h, 2, id);
     truck.setPos(init_x, init_y);
@@ -526,7 +535,7 @@ void truck(int init_x, int init_y, int id, bool is_barn1) {
 
     while (true) {
         while (abs(truck.x - barn_x) > 90 || abs(truck.y - barn_y) > 90) {
-            if (move_towards(truck, id, barn_x, barn_y, 5, truck_w, truck_h, 2)) {
+            if (move_towards(truck, id, barn_x, barn_y, 6, truck_w, truck_h, 2)) {
                 std::lock_guard<std::mutex> disp_lk(display_mtx);
                 truck.updateFarm();
             }
@@ -699,7 +708,6 @@ void oven_thread() {
     while(true) {
         std::unique_lock<std::mutex> bakery_lk(bakery_mtx);
         
-        // Wait for ingredients in STORAGE (not bakery_state)
         oven_cv.wait(bakery_lk, [&] {
             return !bakery_state.oven_busy &&
                    storage_state.eggs >= 2 &&
@@ -711,17 +719,14 @@ void oven_thread() {
         
         bakery_state.oven_busy = true;
         
-        // Remove from storage state
         storage_state.eggs -= 2;
         storage_state.butter -= 2;
         storage_state.flour -= 2;
         storage_state.sugar -= 2;
         
-        // Hide items from storage shelves
         {
             std::lock_guard<std::mutex> disp_lk(display_mtx);
             
-            // Hide used eggs
             for (int i = storage_state.eggs; i < storage_state.eggs + 2 && i < 6; i++) {
                 if (i < storage_items["eggs"].size()) {
                     storage_items["eggs"][i]->setPos(-100, -100);
@@ -729,7 +734,6 @@ void oven_thread() {
                 }
             }
             
-            // Hide used butter
             for (int i = storage_state.butter; i < storage_state.butter + 2 && i < 6; i++) {
                 if (i < storage_items["butter"].size()) {
                     storage_items["butter"][i]->setPos(-100, -100);
@@ -737,7 +741,6 @@ void oven_thread() {
                 }
             }
             
-            // Hide used flour
             for (int i = storage_state.flour; i < storage_state.flour + 2 && i < 6; i++) {
                 if (i < storage_items["flour"].size()) {
                     storage_items["flour"][i]->setPos(-100, -100);
@@ -745,16 +748,37 @@ void oven_thread() {
                 }
             }
             
-            // Hide used sugar
             for (int i = storage_state.sugar; i < storage_state.sugar + 2 && i < 6; i++) {
                 if (i < storage_items["sugar"].size()) {
                     storage_items["sugar"][i]->setPos(-100, -100);
                     storage_items["sugar"][i]->updateFarm();
                 }
             }
+            
+            //show ingredients in oven
+            int ingredient_idx = 0;
+            for (int i = 0; i < 2; i++) {
+                oven_ingredients[ingredient_idx]->setPos(OVEN_X -(i * 30), OVEN_Y-60);
+                oven_ingredients[ingredient_idx]->updateFarm();
+                ingredient_idx++;
+            }
+            for (int i = 0; i < 2; i++) {
+                oven_ingredients[ingredient_idx]->setPos(OVEN_X - (i * 30), OVEN_Y - 75);
+                oven_ingredients[ingredient_idx]->updateFarm();
+                ingredient_idx++;
+            }
+            for (int i = 0; i < 2; i++) {
+                oven_ingredients[ingredient_idx]->setPos(OVEN_X  - (i * 30), OVEN_Y -90);
+                oven_ingredients[ingredient_idx]->updateFarm();
+                ingredient_idx++;
+            }
+            for (int i = 0; i < 2; i++) {
+                oven_ingredients[ingredient_idx]->setPos(OVEN_X - (i * 30), OVEN_Y- 110);
+                oven_ingredients[ingredient_idx]->updateFarm();
+                ingredient_idx++;
+            }
         }
         
-        // Update statistics
         {
             std::lock_guard<std::mutex> stats_lk(stats_mtx);
             global_stats.eggs_used += 2;
@@ -765,9 +789,49 @@ void oven_thread() {
         
         bakery_lk.unlock();
         
+        //bake time
+        std::this_thread::sleep_for(std::chrono::seconds(4));
+        
+        bakery_lk.lock();
+        
+        {
+            std::lock_guard<std::mutex> disp_lk(display_mtx);
+            
+            for (int i = 0; i < 8; i++) {
+                oven_ingredients[i]->setPos(-100, -100);
+                oven_ingredients[i]->updateFarm();
+            }
+            
+            for (int i = 0; i < 3; i++) {
+                oven_cakes[i]->setPos(OVEN_X -(i * 35), OVEN_Y-80);
+                oven_cakes[i]->updateFarm();
+            }
+        }
+        
+        bakery_lk.unlock();
+        
         std::this_thread::sleep_for(std::chrono::seconds(2));
         
         bakery_lk.lock();
+        
+        {
+            std::lock_guard<std::mutex> disp_lk(display_mtx);
+            
+            for (int i = 0; i < 3; i++) {
+                oven_cakes[i]->setPos(-100, -100);
+                oven_cakes[i]->updateFarm();
+            }
+            
+            int current_cakes = bakery_state.cakes;
+            for (int i = current_cakes; i < current_cakes + 3 && i < 6; i++) {
+                int row = i / 3;  
+                int col = i % 3;
+                stock_cakes[i]->setPos(STOCK_X -30 + (col * 35), STOCK_Y + (row * 35));
+                stock_cakes[i]->updateFarm();
+            }
+
+        }
+        
         bakery_state.cakes += 3;
         bakery_state.oven_busy = false;
         
@@ -785,19 +849,22 @@ void child(int init_x, int init_y, int id) {
     DisplayObject child("child", person_w, person_h, 2, id);
     
     static std::mutex line_position_mtx;
-    static int next_in_line = 0;
-    int my_queue_position;
+    static std::vector<int> line_order;  
+    static int total_kids = 0;
+    int my_index;
     
     {
         std::lock_guard<std::mutex> lk(line_position_mtx);
-        my_queue_position = next_in_line++;
+        my_index = total_kids++;
+        if (line_order.size() < 5) {
+            line_order.push_back(id);
+        }
     }
     
     int line_x = 775; 
     int base_line_y = 60;  
     
-    int line_y = base_line_y + (my_queue_position * (person_h + 10));
-
+    int line_y = base_line_y + (my_index * 100);
     child.setPos(line_x, line_y);
     update_position(id, line_x, line_y, person_w, person_h, 2);
     
@@ -807,98 +874,113 @@ void child(int init_x, int init_y, int id) {
     }
     
     while(true) {
-        // Wait for turn to shop (front of line is at bottom)
+        int target_y;
+        bool should_shop = false;
+        
         {
-            std::unique_lock<std::mutex> shop_lk(shop_mtx);
-            child_queue.push(id);
-
-            //do i need this?
-            shop_cv.notify_all();
+            std::lock_guard<std::mutex> lk(line_position_mtx);
             
-            shop_cv.wait(shop_lk, [&] {
-                return current_shopper == -1 && 
-                       !child_queue.empty() && 
-                       child_queue.front() == id;
-            });
-            
-            child_queue.pop();
-            current_shopper = id;
-
+            // find my position in the line
+            auto it = std::find(line_order.begin(), line_order.end(), id);
+            if (it != line_order.end()) {
+                int pos = std::distance(line_order.begin(), it);
+                target_y = base_line_y + (pos * 100);
+                
+                // check if I'm first, can shop
+                if (pos == 0 && current_shopper == -1) {
+                    current_shopper = id;
+                    line_order.erase(line_order.begin()); 
+                    should_shop = true;
+                }
+            } else {
+                target_y = child.y;  
+            }
         }
         
-        // Move to shop
-        while (abs(child.x - SHOP_X) > 5 || abs(child.y - SHOP_Y) > 5) {
-            if (move_towards(child, id, SHOP_X, SHOP_Y, 4, person_w, person_h, 2)){
-                {
+        if (!should_shop && (abs(child.y - target_y) > 10 || abs(child.x - line_x) > 5)) {
+            move_towards(child, id, line_x, target_y, 4, person_w, person_h, 2);
+            {
+                std::lock_guard<std::mutex> disp_lk(display_mtx);
+                child.updateFarm();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+        
+        if (!should_shop) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        if (should_shop){
+            // move to shop
+            while (abs(child.x - SHOP_X) > 5 || abs(child.y - SHOP_Y) > 5) {
+                if (move_towards(child, id, SHOP_X, SHOP_Y, 4, person_w, person_h, 2)){
                     std::lock_guard<std::mutex> disp_lk(display_mtx);
                     child.updateFarm();
                 }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-
-
-        // Buy cakes
-        int want_cakes = (std::rand() % 6) + 1;
-        {
-            std::unique_lock<std::mutex> bakery_lk(bakery_mtx);
-            bakery_cv.wait(bakery_lk, [&] {
-                return bakery_state.cakes >= want_cakes;
-            });
             
-            bakery_state.cakes -= want_cakes;
+            // buy cakes
+            int want_cakes = (std::rand() % 6) + 1;
             
-            {
-                std::lock_guard<std::mutex> stats_lk(stats_mtx);
-                global_stats.cakes_sold += want_cakes;
+
+            int cakes_bought = 0;
+
+            while (cakes_bought < want_cakes) {
+                std::unique_lock<std::mutex> bakery_lk(bakery_mtx);
+                bakery_cv.wait(bakery_lk, [&] {
+                    return bakery_state.cakes > 0;
+                });
+                
+                int buy_now = std::min(bakery_state.cakes, want_cakes - cakes_bought);
+                
+                {
+                    std::lock_guard<std::mutex> disp_lk(display_mtx);
+                    int cakes_before = bakery_state.cakes;
+                    
+                    for (int i = cakes_before - 1; i >= cakes_before - buy_now && i >= 0; i--) {
+                        if (i < stock_cakes.size()) {
+                            stock_cakes[i]->setPos(-100, -100);
+                            stock_cakes[i]->updateFarm();
+                        }
+                    }
+                    
+                    int remaining = cakes_before - buy_now;
+                    for (int i = 0; i < remaining; i++) {
+                        int row = i / 4;
+                        int col = i % 4;
+                        stock_cakes[i]->setPos(STOCK_X -30 + (col * 35), STOCK_Y + (row * 35));
+                        stock_cakes[i]->updateFarm();
+                    }
+                }
+                
+                bakery_state.cakes -= buy_now;
+                cakes_bought += buy_now;
+                
+                {
+                    std::lock_guard<std::mutex> stats_lk(stats_mtx);
+                    global_stats.cakes_sold += buy_now;
+                }
+                
+                oven_cv.notify_all();
             }
-        }
-        
-        // Leave shop
-        {
-            std::lock_guard<std::mutex> shop_lk(shop_mtx);
-            current_shopper = -1;
-            shop_cv.notify_all();
-        }
-        
-        // Move back to end of line (top of the vertical queue)
-        {
-            std::lock_guard<std::mutex> lk(line_position_mtx);
-            // Move to back (which is top position, index 4)
-            my_queue_position = 4;
-        }
-        
-        // Calculate new position at back of line (top)
-        line_y = base_line_y + (my_queue_position * 50);
-        
-        // Move to back of line position
-        while (abs(child.x - line_x) > 10 || abs(child.y - line_y) > 10) {
-            move_towards(child, id, line_x, line_y, 4, person_w, person_h, 2);
+            
+            //leave shop
             {
-                std::lock_guard<std::mutex> disp_lk(display_mtx);
-                child.updateFarm();
+                std::lock_guard<std::mutex> shop_lk(shop_mtx);
+                current_shopper = -1;
+                shop_cv.notify_all();
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        
-        //kid goes away to eat cake
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        
-        // Rotate position - everyone moves down one position
-        {
-            std::lock_guard<std::mutex> lk(line_position_mtx);
-            my_queue_position = (my_queue_position - 1 + 5) % 5;  // Move down in line
-        }
-        
-        // Update position in line
-        line_y = base_line_y + (my_queue_position * 50);
-        while (abs(child.y - line_y) > 10) {
-            move_towards(child, id, child.x, line_y, 4, person_w, person_h, 2);
+
             {
-                std::lock_guard<std::mutex> disp_lk(display_mtx);
-                child.updateFarm();
+                std::lock_guard<std::mutex> lk(line_position_mtx);
+                line_order.push_back(id);  // Add to back
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
         }
     }
 }
@@ -913,9 +995,8 @@ void cow(int init_x, int init_y, int id) {
         cow.updateFarm();
     }
     
-    //decided on static cows </3
     while(true) {
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+        std::this_thread::sleep_for(std::chrono::seconds(100));
     }
 }
 
@@ -952,21 +1033,6 @@ void FarmLogic::run() {
     DisplayObject barn2("barn", 100, 100, 0, current_id++);
     DisplayObject bakery("bakery", 250, 250, 0, current_id++);
 
-    // DisplayObject* storage_eggs = new DisplayObject("egg", 30, 30, 1, current_id++);
-    // DisplayObject* storage_butter = new DisplayObject("butter", 30, 30, 1, current_id++);
-    // DisplayObject* storage_flour = new DisplayObject("flour", 30, 30, 1, current_id++);
-    // DisplayObject* storage_sugar = new DisplayObject("sugar", 30, 30, 1, current_id++);
-    
-    // storage_eggs->setPos(STORAGE_X , EGG_STORAGE_SHELF);
-    // storage_butter->setPos(STORAGE_X, BUTTER_STORAGE_SHELF);
-    // storage_flour->setPos(STORAGE_X, FLOUR_STORAGE_SHELF);
-    // storage_sugar->setPos(STORAGE_X , SUGAR_STORAGE_SHELF);
-
-    // storage_eggs->updateFarm();
-    // storage_butter->updateFarm();
-    // storage_flour->updateFarm();
-    // storage_sugar->updateFarm();
-
 
     std::vector<DisplayObject*> eggs_objs, butter_objs, flour_objs, sugar_objs;
     
@@ -976,26 +1042,45 @@ void FarmLogic::run() {
         flour_objs.push_back(new DisplayObject("flour", 30, 30, 1, current_id++));
         sugar_objs.push_back(new DisplayObject("sugar", 30, 30, 1, current_id++));
     }
+
     
     storage_items["eggs"] = eggs_objs;
     storage_items["butter"] = butter_objs;
     storage_items["flour"] = flour_objs;
     storage_items["sugar"] = sugar_objs;
     
-    // Initially hide all storage items
     for (auto& [type, items] : storage_items) {
         for (auto* item : items) {
             item->setPos(-100, -100);
             item->updateFarm();
         }
     }
-    
-    
-    
-    DisplayObject* cake = new DisplayObject("cake", 30, 30, 1, current_id++);
-    cake->setPos(STOCK_X , STOCK_Y);
-    cake->updateFarm();
 
+    for (int i = 0; i < 3; i++) {
+        oven_cakes.push_back(new DisplayObject("cake", CAKE_W, CAKE_H, 1, current_id++));
+        oven_cakes[i]->setPos(-100, -100);  
+        oven_cakes[i]->updateFarm();
+    }
+
+    for (int i = 0; i < 8; i++) {  
+        std::string ingredient_type;
+        if (i < 2) ingredient_type = "egg";
+        else if (i < 4) ingredient_type = "butter";
+        else if (i < 6) ingredient_type = "flour";
+        else ingredient_type = "sugar";
+        
+        oven_ingredients.push_back(new DisplayObject(ingredient_type, 25, 25, 1, current_id++));
+        oven_ingredients[i]->setPos(-100, -100);
+        oven_ingredients[i]->updateFarm();
+    }
+
+
+
+    for (int i = 0; i < 6; i++) {
+        stock_cakes.push_back(new DisplayObject("cake", CAKE_W, CAKE_H, 1, current_id++));
+        stock_cakes[i]->setPos(-100, -100);  
+        stock_cakes[i]->updateFarm();
+    }
 
     nest.setPos(NEST1_X, NEST1_Y);
     nest2.setPos(NEST2_X, NEST2_Y);
@@ -1015,7 +1100,7 @@ void FarmLogic::run() {
     std::thread oven(oven_thread);
     
     // 1 farmer 
-    std::thread farmer1(farmer, 150, 250, current_id++);
+    std::thread farmer1(farmer, 50, 150, current_id++);
     
     // 3 chickens 
     std::thread chicken3(chicken, 400, 540, current_id++, 1);
